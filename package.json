@@ -1,7 +1,7 @@
 {
   "name": "@mfataka/agent-scaffold",
   "version": "0.1.10",
-  "description": "Bootstrap AI coding-agent config (Claude Code, Cursor, Copilot, Gemini CLI, AGENTS.md, Windsurf) for a repo by auto-detecting its stack and the tools in use.",
+  "description": "Bootstrap AI coding-agent config (Claude Code, Cursor, Copilot, Gemini CLI, AGENTS.md, Windsurf) for a repo by auto-detecting its stack and the tools in use \u2014 interactively, or driven by an AI agent over JSON or MCP.",
   "type": "module",
   "license": "MIT",
   "author": "hammafataka",
@@ -16,7 +16,11 @@
     "gemini-cli",
     "agents-md",
     "windsurf",
-    "mcp"
+    "mcp",
+    "mcp-server",
+    "agent-tool",
+    "llm",
+    "anthropic"
   ],
   "publishConfig": {
     "access": "public"
@@ -58,5 +62,8 @@
     "tsx": "^4.7.0",
     "typescript": "^5.4.0",
     "vitest": "^4.1.10"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "^0.122.0"
   }
 }

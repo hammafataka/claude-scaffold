@@ -1,8 +1,18 @@
 import { FieldSpec } from "../plugins/types";
 
+// Where a field is being asked from. Interactive prompting ignores it; the agent-mode
+// probe uses it to tell an LLM which document section its answer lands in.
+export interface AskContext {
+  stage: string;
+  section?: string;
+}
+
+export type AskFn = (field: FieldSpec, ctx?: AskContext) => Promise<string>;
+
 export interface ResolveOptions {
   yes: boolean;
-  ask: (field: FieldSpec) => Promise<string>;
+  ask: AskFn;
+  ctx?: AskContext;
 }
 
 export async function resolveFields(
@@ -15,12 +25,12 @@ export async function resolveFields(
       if (field.detectedValue !== undefined) {
         values[field.key] = field.detectedValue;
       } else if (field.required) {
-        values[field.key] = await opts.ask(field);
+        values[field.key] = await opts.ask(field, opts.ctx);
       } else {
         values[field.key] = "";
       }
     } else {
-      values[field.key] = await opts.ask(field);
+      values[field.key] = await opts.ask(field, opts.ctx);
     }
   }
   return values;
