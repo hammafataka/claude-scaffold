@@ -1,6 +1,6 @@
-import { RepoSnapshot, StackPlugin, FieldSpec, PlannedWrite, Facts } from "../plugins/types";
+import { RepoSnapshot, StackPlugin, PlannedWrite, Facts } from "../plugins/types";
 import { selectPlugin, PLUGINS } from "../plugins/registry";
-import { resolveFields } from "./field-resolver";
+import { resolveFields, AskFn } from "./field-resolver";
 import { BackSignal } from "./prompter";
 import { Section } from "./md-document";
 import { pddSkills } from "../catalog/pdd-skills";
@@ -43,12 +43,33 @@ export interface PlanOptions {
   tools?: string[];
   // Forced plugin id (from --stack); must match what the CLI already showed the user.
   stackId?: string;
-  ask: (field: FieldSpec) => Promise<string>;
+  ask: AskFn;
   // Fired before each enabled output is built, so the CLI can show staged progress.
   onStage?: (title: string, index: number, total: number) => void;
   // Per-item picker for skills/commands/agents/MCP servers. Returns the chosen names.
   // When omitted (or in --yes), all recommended items are included.
   chooseItems?: (kind: SelectableKind, items: SelectableItem[]) => Promise<string[]>;
+}
+
+// Outputs worth offering for a given stack + tool selection: the plugin must have
+// content to emit AND at least one selected tool must be able to express it. Shared by
+// the interactive CLI, the agent JSON contract, and the MCP server so all three offer
+// exactly the same menu.
+export function relevantOutputs(
+  plugin: StackPlugin,
+  facts: Facts,
+  toolIds: string[],
+): OutputToggles {
+  const caps = combinedCapabilities(resolveTools(toolIds));
+  return {
+    instructions: caps.instructions && plugin.sections(facts).length > 0,
+    skills: caps.skills && plugin.skills(facts).some((s) => s.condition !== false),
+    commands: caps.commands && plugin.commands(facts).some((c) => c.condition !== false),
+    agents: caps.agents && plugin.agents(facts).some((a) => a.condition !== false),
+    settings: caps.settings && plugin.settings(facts).length > 0,
+    mcp: caps.mcp && (plugin.mcpServers?.(facts) ?? []).some((m) => m.condition !== false),
+    pdd: caps.pdd,
+  };
 }
 
 export interface Plan {
@@ -71,7 +92,11 @@ async function buildInstructions(
   while (i < specs.length) {
     const spec = specs[i];
     try {
-      const values = await resolveFields(spec.fields, { yes: opts.yes, ask: opts.ask });
+      const values = await resolveFields(spec.fields, {
+        yes: opts.yes,
+        ask: opts.ask,
+        ctx: { stage: "Instructions", section: spec.heading },
+      });
       Object.assign(confirmed, values);
       generated.push({ heading: spec.heading, body: spec.render(values) });
       i++;
@@ -125,7 +150,11 @@ export async function buildPlan(repo: RepoSnapshot, opts: PlanOptions): Promise<
   if (plugin.fields) {
     const pluginFields = plugin.fields(facts);
     if (pluginFields.length > 0) {
-      const confirmed = await resolveFields(pluginFields, { yes: opts.yes, ask: opts.ask });
+      const confirmed = await resolveFields(pluginFields, {
+        yes: opts.yes,
+        ask: opts.ask,
+        ctx: { stage: "Stack details" },
+      });
       for (const [k, v] of Object.entries(confirmed)) {
         if (v !== undefined && v !== "") facts[k] = v;
       }

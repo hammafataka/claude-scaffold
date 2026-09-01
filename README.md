@@ -4,6 +4,10 @@ Bootstrap a repo's AI coding-agent config — instructions files, skills/rules, 
 
 Setting up a coding agent well is mostly retyping the same instructions file you've written ten times: the build command, the test command, the migration convention, the "never touch prod config" rule — and then doing it *again* in a different format for the next tool. `agent-scaffold` detects what it can from the repo — stack, version, modules, migration style, run/test commands, and which agent tools are already in use — interviews you once for the rest, and writes each selected tool's config in its native layout.
 
+A human can walk the interview. So can a coding agent — `agent-scaffold` exposes the same
+interview as JSON and as an MCP server, and can fill it in itself with `--ai`. See
+[Letting an agent run it](#letting-an-agent-run-it).
+
 > Formerly published as `@mfataka/claude-scaffold`. The old command name still works.
 
 ## Quickstart
@@ -24,7 +28,132 @@ npx @mfataka/agent-scaffold --yes --dry-run
 
 `--yes` needs a terminal for those required fields; in a non-TTY environment the tool exits with a clear message rather than writing blank sections.
 
-Other flags: `--tools <list>` picks the target tools without the prompt (`claude,cursor,copilot,gemini,agents-md,windsurf`); `--stack <id>` skips detection and forces a stack plugin (`spring-boot`, `dart-flutter`, `node-ts`, `generic`) — useful in polyglot repos; `--help` / `--version` do what you expect.
+Other flags: `--tools <list>` picks the target tools without the prompt (`claude,cursor,copilot,gemini,agents-md,windsurf`); `--stack <id>` skips detection and forces a stack plugin (`spring-boot`, `dart-flutter`, `node-ts`, `generic`) — useful in polyglot repos; `--root <dir>` operates on a repo other than the current directory; `--help` / `--version` do what you expect.
+
+## Letting an agent run it
+
+The interview is the bottleneck: it asks about intent — what the project *is*, what agents
+must never touch — that no detector can infer. A coding agent already has the repository in
+context, so it can answer those questions better than a form can guess, and faster than a
+human can type. Three ways to let it, all driving the exact same pipeline as the interactive
+prompts.
+
+### 1. As an MCP server (Claude Code, Cursor, any MCP client)
+
+Add it once, then just ask your agent to set the repo up:
+
+```json
+{
+  "mcpServers": {
+    "agent-scaffold": { "command": "npx", "args": ["-y", "@mfataka/agent-scaffold", "mcp"] }
+  }
+}
+```
+
+Two tools, meant to be called in order:
+
+- **`scaffold_inspect`** — returns the detected stack and facts, every interview question with
+  the answer shape it expects, the selectable skills/commands/agents/MCP servers, and a preview
+  of what accepting the defaults would write. Writes nothing. Pass your `answers` back to it to
+  see the preview and item lists those answers produce.
+- **`scaffold_apply`** — runs the interview with the agent's answers and writes the files.
+  `dryRun: true` previews instead.
+
+### 2. As a JSON contract on the CLI
+
+Same thing without MCP — useful in CI, scripts, or any agent that can run a shell command:
+
+```bash
+agent-scaffold plan  > plan.json                # questions + detected facts + write preview
+agent-scaffold apply --answers answers.json     # writes the config (--dry-run to preview)
+agent-scaffold apply --answers -                # or pipe answers in on stdin
+```
+
+`plan` emits one JSON object. Each question carries the key to answer it under and an
+`answerType` telling you the shape:
+
+```jsonc
+{
+  "stack": { "id": "node-ts", "detected": ["TypeScript · Node 20 · Next.js · npm", "ORM: prisma"] },
+  "questions": [
+    { "key": "overview", "answerType": "string", "required": true, "section": "## Overview",
+      "question": "One line: what does this project do?" },
+    { "key": "never", "answerType": "string[]", "required": true, "section": "## Never do",
+      "options": [{ "value": "Never edit generated files by hand" }] }
+  ],
+  "selectables": { "skills": [{ "name": "run", "recommended": true }] }
+}
+```
+
+Answers are a flat map keyed by `key`. `string[]` questions take an array (one bullet per
+entry), `boolean` questions take `true`/`false`, and `options` are suggestions rather than a
+closed set — a value outside them is kept as a custom answer, with a warning. Omit a key to
+accept its detected value:
+
+```json
+{
+  "tools": ["claude", "agents-md"],
+  "answers": {
+    "overview": "HTTP API for order intake and fulfilment, backed by Postgres via Prisma.",
+    "architecture": ["Fastify routes in src/routes/, one file per resource"],
+    "never": ["Never edit prisma/migrations/* by hand", "Never commit .env"]
+  },
+  "select": { "mcp": ["context7", "postgres"] }
+}
+```
+
+`apply` answers with what it did, plus what it couldn't: `unanswered` lists required questions
+that had no answer and no detected fallback (their sections are dropped), `ignored` lists answer
+keys no question asked for — usually a typo or a stale plan — and `warnings` explains anything
+it had to interpret. Both commands print JSON on stdout and exit non-zero with
+`{"ok": false, "error": ...}` on failure, so nothing has to parse prose.
+
+Two things worth knowing:
+
+- `outputs.default` is what `apply` writes if you say nothing — everything in
+  `outputs.available` except the **PDD methodology**, which is opt-in exactly as it is under
+  `--yes`. Ask for it with `"outputs": { "pdd": true }`.
+- A few answers feed back into detection — a Spring repo's migration tool, a Flutter app's
+  state management — and can add or remove skills and commands. `plan` computes
+  `selectables` and `preview` from the answers you send it, so if you answered one of those and
+  intend to hand-pick items, run `plan` once more with your answers first. The interactive
+  pickers see the same corrected list, because both go through the same pipeline.
+
+### 3. Let it fill itself in — `--ai`
+
+For a human who'd rather review than type. `agent-scaffold --ai` reads the repo, asks Claude to
+draft every answer, and shows you the draft before anything is written:
+
+```bash
+agent-scaffold --ai                              # draft, review, write
+agent-scaffold --ai --guidance "we deploy with ArgoCD; never mention Docker"
+agent-scaffold --ai --yes --dry-run              # unattended preview
+```
+
+Accepting the draft replaces the *typing*, not the rest of the CLI: you still get the
+"what should I set up?" picker and the per-item pickers for skills, commands, agents, and MCP
+servers, with the drafted wording already filled in behind them. Decline instead and you drop
+into the full interview with every prompt **pre-filled with the draft** — checklists
+pre-checked, text fields pre-written — so you're editing rather than starting from a blank page.
+`--ai --yes` is the unattended path that skips both.
+
+`--ai` uses `claude-opus-5` by default (`--model` to change it) and needs credentials, either
+`ANTHROPIC_API_KEY` or a profile from `ant auth login`. The Anthropic SDK it needs is an
+**optional** dependency: installed by default, so `npx` works out of the box, and skippable with
+`npm install --omit=optional` if you only ever use the interactive flow.
+
+### Same interview, whichever route
+
+All four routes drive one pipeline, so none of them is a reduced version of the others. That's
+enforced by tests rather than by intent: for every stack fixture, `test/agent-parity.test.ts`
+asserts the agent contract asks **the same questions in the same order** as the interactive
+interview, runs **the same stages** with none skipped, offers **the same items** in each picker,
+and — given the same answers — produces **byte-for-byte identical files**. It also asserts that
+`plan`'s preview matches what `apply` then writes, and that the MCP tools return exactly what
+the CLI does.
+
+Existing instruction files are still merged rather than clobbered, and existing rule/command
+files are still skipped. An agent re-running this is as safe as you re-running it.
 
 ## Supported tools
 

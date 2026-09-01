@@ -18,15 +18,24 @@ Node 20+ is required.
 
 ```
 src/
-  cli.ts                 entry: detect stack & tools → choose tools/outputs → pipeline → write
+  cli.ts                 entry: interactive run, plus the plan/apply/mcp subcommands
   core/
     repo-scanner.ts      read-only snapshot of the target repo
     pipeline.ts          interview stages collect Artifacts; tool adapters emit them
     prompter.ts          @clack prompts + ← back-navigation
     field-resolver.ts    detected-value vs. ask logic (honours --yes)
+    checklist.ts         pure bullet-list helpers (shared by prompts and agent answers)
     readme.ts            README first-paragraph summary (Overview prefill)
     md-document.ts        / md-merger.ts   parse & merge markdown instruction files
     writer.ts            apply planned writes (create / update / skip)
+  agent/                 AGENT MODE — the same interview, driven by a machine
+    types.ts             the JSON contract (questions, answers, results) + SCHEMA_VERSION
+    probe.ts             enumerate the interview by walking it with a recording `ask`
+    answers.ts           answer-map-driven `ask` / item picker, with coercion + warnings
+    session.ts           inspect() and apply() — the core all three agent routes share
+    mcp.ts               stdio JSON-RPC MCP server (scaffold_inspect / scaffold_apply)
+    autofill.ts          --ai: ask Claude to draft the answers from the repo
+    cli-modes.ts         answer-file reading, draft preview, draft-seeded prompts
   plugins/               STACKS — what the repo is (detection + interview content)
     types.ts             StackPlugin + all the spec interfaces
     registry.ts          the list of real plugins + the detection threshold
@@ -46,6 +55,13 @@ test/                    vitest specs + fixtures/ (sample repos)
 ```
 
 The golden rule: **engine code carries no project wording, and catalog content carries no logic.** If you're tuning what a generated file *says*, you almost certainly want `src/catalog/`, not a plugin. Stack plugins never know about tools; tool adapters never know about stacks — they meet at `Artifacts`.
+
+`src/agent/` adds no second pipeline: `probe.ts` enumerates the questions by running the real
+`buildPlan` with an `ask` that records each field and returns its detected value, and `apply()`
+runs that same `buildPlan` with an `ask` backed by the caller's answer map. That's deliberate —
+a hand-maintained question list would drift from the interview it describes. A new plugin field
+shows up in `plan`, in the MCP tool, and in the `--ai` schema with no extra work; the one thing
+to keep true is that field `key`s stay unique within a plugin, since answers are a flat map.
 
 ## Editing authored content
 
@@ -87,7 +103,18 @@ Never inline credentials in generated config — MCP entries use `${ENV_VAR}` pl
 
 - `vitest`, one spec per area under `test/`. Detection tests run against sample repos in `test/fixtures/`.
 - Cover new behavior, and keep the suite green: `npm test` must pass, and `npm run typecheck` must be clean, before you open a PR.
-- Prefer testing through the public surface (a plugin's `detect`/`sections`, the pipeline's `buildPlan`) rather than internals.
+- Prefer testing through the public surface (a plugin's `detect`/`sections`, the pipeline's `buildPlan`, `agent/session`'s `inspect`/`apply`) rather than internals.
+- Agent mode has its own specs: `agent-contract` (inspect/apply end to end, including writes to a
+  temp dir), `agent-answers` (coercion), `agent-mcp` (the protocol handler, driven over an
+  in-memory transport), `agent-autofill` (schema + prompt building, with the Anthropic SDK
+  mocked — no test ever calls the real API), and `agent-cli-modes`.
+- **`agent-parity.test.ts` is the one to keep green when you touch the pipeline.** For every
+  stack fixture it walks the real interview and the agent contract side by side and asserts they
+  ask the same questions in the same order, run the same stages, offer the same items, and emit
+  byte-identical files for the same answers — plus that `plan`'s preview matches `apply`, and
+  that the MCP tools return what the CLI returns. If you add a stage, a picker, or a plugin
+  field, add its fixture here; the suite is written so that a route quietly falling behind fails
+  rather than passes.
 
 ## Pull requests
 

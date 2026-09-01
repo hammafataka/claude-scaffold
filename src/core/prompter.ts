@@ -11,6 +11,11 @@ import {
 } from "@clack/core";
 import { FieldSpec, ChoiceOption, FieldKind } from "../plugins/types";
 import { OutputToggles, SelectableKind } from "./pipeline";
+import { checklistBody, parseCustom } from "./checklist";
+
+// Re-exported: these used to live here, and both tests and callers import them from
+// prompter. They now sit in ./checklist so non-terminal callers can reuse them.
+export { checklistBody, parseCustom };
 
 // Sentinels for the synthetic menu entries; namespaced so they can't collide with
 // a real option value.
@@ -165,19 +170,6 @@ async function askSelect(field: FieldSpec): Promise<string> {
   return String(choice);
 }
 
-// Parse a comma-separated "add my own" answer into trimmed, non-empty items.
-export function parseCustom(raw: string): string[] {
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-// Build a checklist section body from the chosen option values plus any custom additions.
-// Pure (no I/O) so it can be tested directly. Empty selection → empty string.
-export function checklistBody(selected: string[], customRaw = ""): string {
-  return [...selected, ...parseCustom(customRaw)].map((v) => `- ${v}`).join("\n");
-}
 
 // Multi-choice checklist: detected options pre-checked, "Add my own…" appends free text.
 // Result is rendered as a markdown bullet list. Space toggles, Enter confirms — the hint
